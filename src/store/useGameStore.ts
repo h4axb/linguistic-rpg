@@ -56,6 +56,9 @@ export interface GameState {
   // Campfire
   timesHealed: number // cost = 2 + timesHealed gold per heal
 
+  // HP Pact — gold-for-HP purchase, cost scales with each purchase
+  hpPactPurchases: number
+
   // Boss
   bossHP: number
   bossElement: Element
@@ -106,6 +109,9 @@ export interface GameActions {
 
   // Campfire
   healAtCampfire: () => void
+
+  // HP Pact
+  buyHPWithGold: () => void
 
   // Combat
   executeAttack: (cardId: string) => void
@@ -239,6 +245,13 @@ function calcPlayerMaxHP(MP: number, bloodPacts: number): number {
   return Math.floor(100 * MP * Math.pow(0.85, bloodPacts))
 }
 
+export const HP_PACT_HEAL_AMOUNT = 15
+
+// 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, ... — +1/+2 gold alternating per purchase
+export function calcHPPactCost(purchases: number): number {
+  return 3 + Math.floor(purchases * 1.5)
+}
+
 function calcDerivedStats(level: number, bloodPacts: number) {
   const ME = calcME(level)
   const MP = calcMP(level)
@@ -323,6 +336,7 @@ function buildInitialState(): GameState {
     gold: 10,
     bloodPacts: blood,
     timesHealed: 0,
+    hpPactPurchases: 0,
     bossHP: bossMaxHP,
     bossElement: randomElement(),
     bossCombatState: 'IDLE',
@@ -451,6 +465,21 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       gold: state.gold - cost,
       playerHP: Math.min(state.playerMaxHP, state.playerHP + healAmount),
       timesHealed: state.timesHealed + 1,
+      storyLog: [...state.storyLog, makeLogEntry(pickRandom(LOG_HEAL))],
+    })
+  },
+
+  // ── HP Pact ───────────────────────────────────────────────────────────────
+
+  buyHPWithGold: () => {
+    const state = get()
+    const cost = calcHPPactCost(state.hpPactPurchases)
+    if (state.gold < cost) return
+    if (state.playerHP >= state.playerMaxHP) return
+    set({
+      gold: state.gold - cost,
+      playerHP: Math.min(state.playerMaxHP, state.playerHP + HP_PACT_HEAL_AMOUNT),
+      hpPactPurchases: state.hpPactPurchases + 1,
       storyLog: [...state.storyLog, makeLogEntry(pickRandom(LOG_HEAL))],
     })
   },

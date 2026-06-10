@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
-import { useGameStore } from '../store/useGameStore'
+import { useGameStore, calcHPPactCost, HP_PACT_HEAL_AMOUNT } from '../store/useGameStore'
 import type { Card, Element as GameElement, Rarity, LogEntry, DatabankEntry } from '../store/useGameStore'
 import { ShopOddsDisplay } from './ShopOddsDisplay'
 
@@ -581,6 +581,40 @@ function CardSlot({
   )
 }
 
+// ── ElementTile ───────────────────────────────────────────────────────────────
+
+interface ElementTileProps {
+  el: GameElement
+  active?: boolean
+  exhausted?: boolean
+  onClick?: () => void
+  disabled?: boolean
+  title?: string
+}
+
+function ElementTile({ el, active, exhausted, onClick, disabled, title }: ElementTileProps) {
+  const className = [
+    'w-14 h-14 text-2xl rounded border transition-colors font-bold leading-none flex items-center justify-center',
+    ELEMENT_TEXT[el],
+    active ? 'border-white bg-neutral-800' : 'border-neutral-700',
+    exhausted ? 'opacity-25' : onClick ? 'hover:bg-neutral-800' : '',
+  ].join(' ')
+
+  if (onClick) {
+    return (
+      <button onClick={onClick} disabled={disabled} title={title} className={className}>
+        {HANJA[el] ?? el}
+      </button>
+    )
+  }
+
+  return (
+    <div title={title} className={className}>
+      {HANJA[el] ?? el}
+    </div>
+  )
+}
+
 // ── Module-Level Helpers ──────────────────────────────────────────────────────
 
 function xpToNext(level: number): number { return level * 4 }
@@ -629,8 +663,8 @@ export default function GameLayout() {
   const gold              = useGameStore(s => s.gold)
   const playerHP          = useGameStore(s => s.playerHP)
   const playerMaxHP       = useGameStore(s => s.playerMaxHP)
-  const bloodPacts        = useGameStore(s => s.bloodPacts)
   const timesHealed       = useGameStore(s => s.timesHealed)
+  const hpPactPurchases   = useGameStore(s => s.hpPactPurchases)
   const shopLevel         = useGameStore(s => s.shopLevel)
   const shopCards         = useGameStore(s => s.shopCards)
   const bossHP            = useGameStore(s => s.bossHP)
@@ -641,7 +675,6 @@ export default function GameLayout() {
   const isCrafting        = useGameStore(s => s.isCrafting)
   const elements          = useGameStore(s => s.elements)
   const exhaustedElements = useGameStore(s => s.exhaustedElements)
-  const bloodAltarCard    = useGameStore(s => s.bloodAltarCard)
   const currentLevel      = useGameStore(s => s.currentLevel)
   const lootCards         = useGameStore(s => s.lootCards)
 
@@ -651,7 +684,7 @@ export default function GameLayout() {
   const checkHoverCache  = useGameStore(s => s.checkHoverCache)
   const healAtCampfire   = useGameStore(s => s.healAtCampfire)
   const upgradeShopLevel = useGameStore(s => s.upgradeShopLevel)
-  const acceptBloodPact  = useGameStore(s => s.acceptBloodPact)
+  const buyHPWithGold    = useGameStore(s => s.buyHPWithGold)
   const rerollShop       = useGameStore(s => s.rerollShop)
   const draftLootCard    = useGameStore(s => s.draftLootCard)
   const advanceLevel     = useGameStore(s => s.advanceLevel)
@@ -791,13 +824,13 @@ export default function GameLayout() {
     <div className="flex h-screen w-screen bg-neutral-950 text-neutral-200 overflow-hidden font-mono select-none">
 
       {/* ── Left Panel ─────────────────────────────────────────────────── */}
-      <div className="w-[240px] shrink-0 h-full flex flex-col bg-neutral-950 border-r border-neutral-800 p-4">
-        <div className="shrink-0 mb-3 text-xs text-neutral-500 border border-neutral-800 rounded px-2 py-1">
+      <div className="w-1/4 shrink-0 h-full flex flex-col bg-neutral-950 border-r border-neutral-800 p-4">
+        <div className="shrink-0 mb-40 text-xs text-neutral-500 border border-neutral-800 rounded px-2 py-1">
           [ SYSTEM ] Lv.{currentLevel} | Turn {turnCount}
         </div>
         <div
           ref={logRef}
-          className="flex-1 overflow-y-auto border border-neutral-800 p-4 bg-neutral-950/50 space-y-1"
+          className="shrink-0 h-[27%] mb-40 overflow-y-auto border border-neutral-800 p-4 bg-neutral-950/50 space-y-1"
         >
           {storyLog.map((entry: LogEntry) => (
             <p key={entry.id} className="text-xs text-neutral-400 leading-relaxed">
@@ -808,27 +841,22 @@ export default function GameLayout() {
             <p className="text-xs text-neutral-600 italic">Awaiting your first move...</p>
           )}
         </div>
-        <div className="shrink-0 pt-4 border-t border-neutral-800">
+        <div className="shrink-0 h-[45%] pb-4">
           <p className="text-[10px] text-neutral-600 mb-2 tracking-widest">ELEMENTS</p>
           <div className="grid grid-cols-6 gap-1">
             {elements.map((el: GameElement) => {
               const exhausted = exhaustedElements.includes(el)
               const active = selectedElement === el
               return (
-                <button
+                <ElementTile
                   key={el}
-                  onClick={() => setSelectedElement(active ? null : el)}
+                  el={el}
+                  active={active}
+                  exhausted={exhausted}
                   disabled={exhausted || isCrafting}
                   title={el}
-                  className={[
-                    'text-sm rounded border p-1 transition-colors font-bold leading-none',
-                    ELEMENT_TEXT[el],
-                    active ? 'border-white bg-neutral-800' : 'border-neutral-700',
-                    exhausted ? 'opacity-25' : 'hover:bg-neutral-800',
-                  ].join(' ')}
-                >
-                  {HANJA[el] ?? el}
-                </button>
+                  onClick={() => setSelectedElement(active ? null : el)}
+                />
               )
             })}
           </div>
@@ -836,201 +864,199 @@ export default function GameLayout() {
       </div>
 
       {/* ── Center Arena ───────────────────────────────────────────────── */}
-      <div className="flex-1 bg-neutral-950/40 p-6 flex flex-col justify-between overflow-hidden relative">
-
-        {/* TOP-RIGHT COCKPIT */}
-        <div className="absolute top-4 right-[88px] flex items-center gap-2 z-10">
-
-          {/* Buff info tile — shows equipped buffs summary, hover for full list */}
-          <div
-            className="relative w-14 h-14 flex flex-col items-center justify-center bg-neutral-900 border border-neutral-700 rounded-md cursor-default"
-            onMouseEnter={() => setHoveredBuffId('__buff_info')}
-            onMouseLeave={() => setHoveredBuffId(null)}
-          >
-            <span className="text-base leading-none">
-              {equippedItems.length > 0 ? equippedItems[equippedItems.length - 1].icon : '✦'}
-            </span>
-            <span className="text-[9px] text-amber-400 font-bold leading-none mt-0.5">
-              {equippedItems.length > 0 ? `${equippedItems.length} buff${equippedItems.length > 1 ? 's' : ''}` : '—'}
-            </span>
-            {hoveredBuffId === '__buff_info' && (
-              <div className="absolute top-full right-0 mt-2 z-50 w-52 bg-neutral-900 border border-neutral-700 rounded-md p-2 pointer-events-none shadow-xl">
-                <p className="text-[10px] font-bold text-amber-300 mb-2">Active Buffs</p>
-                {equippedItems.length === 0 ? (
-                  <p className="text-[9px] text-neutral-500 italic">No buffs equipped</p>
-                ) : (
-                  equippedItems.map(item => (
-                    <div key={item.id} className="flex items-center gap-2 mb-1.5 last:mb-0">
-                      <span className="text-sm shrink-0">{item.icon}</span>
-                      <div>
-                        <p className="text-[9px] font-bold text-amber-300 leading-none">{item.name}</p>
-                        <p className="text-[8px] text-neutral-400 leading-tight mt-0.5">{item.desc}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Blood pact — always shows calculated HP cost; two-click buy when offer active */}
-          <button
-            onClick={() => {
-              if (bloodAltarCard == null || combatPhase === 'GAME_OVER' || isCrafting || handFull) return
-              if (!confirmingBloodPact) {
-                setConfirmingBloodPact(true)
-              } else {
-                acceptBloodPact()
-                setConfirmingBloodPact(false)
-              }
-            }}
-            className={[
-              'relative w-14 h-14 flex flex-col items-center justify-center border rounded-md transition-colors',
-              bloodAltarCard != null && combatPhase !== 'GAME_OVER' && !isCrafting && !handFull
-                ? confirmingBloodPact
-                  ? 'bg-rose-800/60 border-rose-200 cursor-pointer'
-                  : 'bg-rose-950/60 border-rose-400 hover:bg-rose-900/50 hover:border-rose-300 cursor-pointer'
-                : bloodPacts > 0
-                  ? 'bg-rose-950/40 border-rose-500 cursor-default'
-                  : 'bg-neutral-900 border-neutral-700 opacity-40 cursor-default',
-            ].join(' ')}
-            onMouseEnter={() => setHoveredBuffId('__blood_pact')}
-            onMouseLeave={() => { setHoveredBuffId(null); setConfirmingBloodPact(false) }}
-          >
-            {confirmingBloodPact ? (
-              <>
-                <span className="text-base leading-none">✓</span>
-                <span className="text-[9px] font-bold leading-none mt-0.5 text-rose-200">confirm?</span>
-              </>
-            ) : (
-              <>
-                <span className={`text-xl leading-none ${bloodPacts > 0 || bloodAltarCard != null ? 'animate-pulse' : ''}`}>🩸</span>
-                <span className="text-[9px] font-bold leading-none mt-0.5 text-rose-400">
-                  −{Math.round(playerMaxHP * 0.15)} hp
-                </span>
-              </>
-            )}
-            {hoveredBuffId === '__blood_pact' && !confirmingBloodPact && (
-              <div className="absolute top-full right-0 mt-2 z-50 w-52 bg-neutral-900 border border-rose-800/60 rounded-md p-2 pointer-events-none shadow-xl">
-                <p className="text-[10px] font-bold text-rose-300 mb-2">Blood Pact{bloodPacts > 1 ? 's' : ''}</p>
-                {bloodPacts === 0 ? (
-                  <p className="text-[9px] text-neutral-500 italic">No pacts active</p>
-                ) : (
-                  Array.from({ length: bloodPacts }).map((_, i) => (
-                    <div key={i} className="flex items-center gap-2 mb-1.5 last:mb-0">
-                      <span className="text-sm shrink-0">🩸</span>
-                      <div>
-                        <p className="text-[9px] font-bold text-rose-300 leading-none">Pact {i + 1}</p>
-                        <p className="text-[8px] text-neutral-400 leading-tight mt-0.5">−15% Max HP</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-                <p className="text-[8px] text-rose-400 mt-2 border-t border-rose-900 pt-1.5">
-                  Next cost: −{Math.round(playerMaxHP * 0.15)} hp
-                </p>
-              </div>
-            )}
-          </button>
-        </div>
+      <div className="flex-1 bg-neutral-950/40 p-6 flex flex-col justify-center gap-32 overflow-hidden relative">
 
         {/* Boss field */}
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-[10px] tracking-widest text-neutral-500 uppercase">
-            {BOSS_TITLES[bossElement]}
-          </p>
-          <p className={`text-xs font-bold ${ELEMENT_TEXT[bossElement]}`}>
-            {bossElement.toUpperCase()}
-          </p>
-          <PixelSprite craftKey={bossElement} element={bossElement} isBoss={true} />
-          <div className="w-48 h-2 bg-neutral-800 rounded overflow-hidden mt-1">
-            <div
-              className="h-full bg-red-600 transition-all duration-300"
-              style={{ width: `${Math.max(0, (bossHP / bossMaxHP) * 100)}%` }}
-            />
+        <div className="flex flex-col items-center gap-24">
+          <div className="relative flex items-center justify-center gap-8">
+            <p className="text-[20px] tracking-widest text-neutral-500 uppercase">
+              {BOSS_TITLES[bossElement]}
+            </p>
+            <ElementTile el={bossElement} title={bossElement} />
           </div>
-          <p className="text-xs text-neutral-400 tabular-nums">{bossHP} / {bossMaxHP}</p>
-          <p className={`text-xs ${turnCount >= 8 ? 'text-red-400 animate-pulse' : 'text-neutral-500'}`}>
-            TURN {turnCount}
-          </p>
+          <div className="flex flex-col items-center gap-6">
+            <PixelSprite craftKey={bossElement} element={bossElement} isBoss={true} />
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="w-48 h-2 bg-neutral-800 rounded overflow-hidden">
+                <div
+                  className="h-full bg-red-600 transition-all duration-300"
+                  style={{ width: `${Math.max(0, (bossHP / bossMaxHP) * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-neutral-400 tabular-nums">{bossHP} / {bossMaxHP}</p>
+            </div>
+          </div>
+          {/* <p className={`text-xs ${turnCount >= 8 ? 'text-red-400 animate-pulse' : 'text-neutral-500'}`}>
+            //TURN {turnCount}
+          </p> */}
         </div>
 
         {/* Player HUD */}
         <div className="flex flex-col items-center gap-2 pb-2">
-          <div className="w-full max-w-lg flex items-center gap-2">
-            <span className="text-xs text-neutral-400 shrink-0 tabular-nums w-20 text-right">
-              {playerHP}/{playerMaxHP}
-            </span>
-            <div className="flex-1 h-3 bg-neutral-800 rounded overflow-hidden">
-              <div
-                className="h-full bg-emerald-500 transition-all duration-300"
-                style={{ width: `${Math.max(0, (playerHP / playerMaxHP) * 100)}%` }}
-              />
-            </div>
-            <button
-              onClick={() => {
-                if (combatPhase === 'IDLE') {
-                  useGameStore.setState({ combatPhase: 'PLAYER_TURN' })
-                } else if (combatPhase === 'POST_BOSS_LOOT' && !lootCards) {
-                  advanceLevel()
-                } else {
-                  healAtCampfire()
-                }
-              }}
-              disabled={
-                combatPhase === 'IDLE' ? false :
-                (combatPhase === 'POST_BOSS_LOOT' && !lootCards) ? false :
-                (gold < healCost || playerHP >= playerMaxHP || isCrafting)
-              }
-              className="shrink-0 flex items-center gap-1.5 px-2 py-1 border border-neutral-700 rounded text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 disabled:opacity-30 disabled:cursor-not-allowed transition-colors group"
-            >
-              <span className="w-3 h-3 border border-neutral-500 rounded-sm group-hover:border-neutral-300 transition-colors shrink-0" />
-              <span>
-                {combatPhase === 'IDLE' ? '⚔ start fight' :
-                 (combatPhase === 'POST_BOSS_LOOT' && !lootCards) ? '▶ next level' :
-                 `⚑ heal ${healCost}g`}
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-full max-w-lg flex items-center gap-1">
+              <span className="text-xs text-neutral-400 shrink-0 tabular-nums w-20 text-right">
+                {playerHP}/{playerMaxHP}
               </span>
-            </button>
+              <div className="flex-1 h-3 bg-neutral-800 rounded overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300"
+                  style={{ width: `${Math.max(0, (playerHP / playerMaxHP) * 100)}%` }}
+                />
+              </div>
+              <button
+                onClick={() => {
+                  if (combatPhase === 'IDLE') {
+                    useGameStore.setState({ combatPhase: 'PLAYER_TURN' })
+                  } else if (combatPhase === 'POST_BOSS_LOOT' && !lootCards) {
+                    advanceLevel()
+                  } else {
+                    healAtCampfire()
+                  }
+                }}
+                disabled={
+                  combatPhase === 'IDLE' ? false :
+                  (combatPhase === 'POST_BOSS_LOOT' && !lootCards) ? false :
+                  (gold < healCost || playerHP >= playerMaxHP || isCrafting)
+                }
+                className="shrink-0 flex items-center gap-1.5 px-2 py-1 border border-neutral-700 rounded text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200 hover:bg-neutral-800/60 disabled:opacity-30 disabled:cursor-not-allowed transition-colors group"
+              >
+                <span className="w-3 h-3 border border-neutral-500 rounded-sm group-hover:border-neutral-300 transition-colors shrink-0" />
+                <span>
+                  {combatPhase === 'IDLE' ? '⚔ start fight' :
+                   (combatPhase === 'POST_BOSS_LOOT' && !lootCards) ? '▶ next level' :
+                   `⚑ heal ${healCost}g`}
+                </span>
+              </button>
+            </div>
+            <div className="flex gap-2 flex-wrap justify-center">
+              {hand.map((card, index) => (
+                <CardSlot
+                  key={index}
+                  card={card}
+                  slotIndex={index}
+                  isSelected={selectedCardId === card?.id}
+                  selectedElement={selectedElement}
+                  isCrafting={isCrafting}
+                  onSelect={setSelectedCardId}
+                  closeMenu={closeMenu}
+                  onHoverCraft={setHoverTooltip}
+                  hoverTooltip={hoverTooltip}
+                  executeAttack={executeAttack}
+                  discardCard={discardCard}
+                  craftCards={craftCards}
+                  checkHoverCache={checkHoverCache}
+                  combatPhase={combatPhase}
+                />
+              ))}
+            </div>
           </div>
           {isCrafting && (
             <p className="text-xs text-amber-400 tracking-widest animate-pulse">⚙ FORGING...</p>
           )}
-          <div className="flex gap-2 flex-wrap justify-center">
-            {hand.map((card, index) => (
-              <CardSlot
-                key={index}
-                card={card}
-                slotIndex={index}
-                isSelected={selectedCardId === card?.id}
-                selectedElement={selectedElement}
-                isCrafting={isCrafting}
-                onSelect={setSelectedCardId}
-                closeMenu={closeMenu}
-                onHoverCraft={setHoverTooltip}
-                hoverTooltip={hoverTooltip}
-                executeAttack={executeAttack}
-                discardCard={discardCard}
-                craftCards={craftCards}
-                checkHoverCache={checkHoverCache}
-                combatPhase={combatPhase}
-              />
-            ))}
-          </div>
         </div>
       </div>
 
+      {/* ── Right Panel ────────────────────────────────────────────────── */}
+      <div className="w-1/4 shrink-0 h-full p-4 flex items-start justify-start gap-1">
+
+        {/* Buff info tile — shows equipped buffs summary, hover for full list */}
+        <div
+          className="relative w-14 h-14 flex flex-col items-center justify-center bg-neutral-900 border border-neutral-700 rounded-md cursor-default"
+          onMouseEnter={() => setHoveredBuffId('__buff_info')}
+          onMouseLeave={() => setHoveredBuffId(null)}
+        >
+          <span className="text-base leading-none">
+            {equippedItems.length > 0 ? equippedItems[equippedItems.length - 1].icon : '✦'}
+          </span>
+          <span className="text-[9px] text-amber-400 font-bold leading-none mt-0.5">
+            {equippedItems.length > 0 ? `${equippedItems.length} buff${equippedItems.length > 1 ? 's' : ''}` : '—'}
+          </span>
+          {hoveredBuffId === '__buff_info' && (
+            <div className="absolute top-full right-0 mt-2 z-50 w-52 bg-neutral-900 border border-neutral-700 rounded-md p-2 pointer-events-none shadow-xl">
+              <p className="text-[10px] font-bold text-amber-300 mb-2">Active Buffs</p>
+              {equippedItems.length === 0 ? (
+                <p className="text-[9px] text-neutral-500 italic">No buffs equipped</p>
+              ) : (
+                equippedItems.map(item => (
+                  <div key={item.id} className="flex items-center gap-2 mb-1.5 last:mb-0">
+                    <span className="text-sm shrink-0">{item.icon}</span>
+                    <div>
+                      <p className="text-[9px] font-bold text-amber-300 leading-none">{item.name}</p>
+                      <p className="text-[8px] text-neutral-400 leading-tight mt-0.5">{item.desc}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* HP Pact — pay gold to recover HP; cost scales with each purchase */}
+        <button
+          onClick={() => {
+            const cost = calcHPPactCost(hpPactPurchases)
+            if (isCrafting || playerHP >= playerMaxHP || gold < cost) return
+            if (!confirmingBloodPact) {
+              setConfirmingBloodPact(true)
+            } else {
+              buyHPWithGold()
+              setConfirmingBloodPact(false)
+            }
+          }}
+          className={[
+            'relative w-14 h-14 flex flex-col items-center justify-center border rounded-md transition-colors',
+            !isCrafting && playerHP < playerMaxHP && gold >= calcHPPactCost(hpPactPurchases)
+              ? confirmingBloodPact
+                ? 'bg-rose-800/60 border-rose-200 cursor-pointer'
+                : 'bg-rose-950/60 border-rose-400 hover:bg-rose-900/50 hover:border-rose-300 cursor-pointer'
+              : 'bg-neutral-900 border-neutral-700 opacity-40 cursor-default',
+          ].join(' ')}
+          onMouseEnter={() => setHoveredBuffId('__hp_pact')}
+          onMouseLeave={() => { setHoveredBuffId(null); setConfirmingBloodPact(false) }}
+        >
+          {confirmingBloodPact ? (
+            <>
+              <span className="text-base leading-none">✓</span>
+              <span className="text-[9px] font-bold leading-none mt-0.5 text-rose-200">confirm?</span>
+            </>
+          ) : (
+            <>
+              <span className="text-base leading-none">🩸</span>
+              <span className="text-[9px] font-bold leading-none mt-0.5 text-emerald-400">
+                +{HP_PACT_HEAL_AMOUNT} hp
+              </span>
+              <span className="text-[9px] font-bold leading-none text-amber-400">
+                {calcHPPactCost(hpPactPurchases)}g
+              </span>
+            </>
+          )}
+          {hoveredBuffId === '__hp_pact' && !confirmingBloodPact && (
+            <div className="absolute top-full right-0 mt-2 z-50 w-52 bg-neutral-900 border border-rose-800/60 rounded-md p-2 pointer-events-none shadow-xl">
+              <p className="text-[10px] font-bold text-rose-300 mb-2">Blood Pact</p>
+              <p className="text-[9px] text-neutral-400 leading-tight">
+                Pay {calcHPPactCost(hpPactPurchases)}g to recover {HP_PACT_HEAL_AMOUNT} HP. Cost rises with each pact made.
+              </p>
+              <p className="text-[8px] text-rose-400 mt-2 border-t border-rose-900 pt-1.5">
+                Pacts made: {hpPactPurchases}
+              </p>
+            </div>
+          )}
+        </button>
+      </div>
+
       {/* ── Barn Door HUD ──────────────────────────────────────────────── */}
-      <div className={`fixed top-0 bottom-0 right-0 z-40 flex h-full transition-transform duration-300 ease-in-out
+      <div className={`fixed top-6 bottom-8 right-0 z-40 flex transition-transform duration-300 ease-in-out
         ${drawerOpen ? 'translate-x-0' : 'translate-x-[calc(100%-5rem)]'}`}>
 
         {/* LEFT INNER COLUMN: bookmark tabs flush to right screen edge */}
-        <div className="w-20 shrink-0 h-full flex flex-col items-stretch pt-20 gap-2 z-30">
+        <div className="w-20 shrink-0 h-full flex flex-col items-stretch pt-2 gap-2 z-30">
           <button
             onClick={() => { setDrawerOpen(v => !v); if (!drawerOpen) setMarketViewMode('shop') }}
             className="h-14 flex items-center justify-center bg-neutral-900 border-y border-l border-neutral-700 rounded-l-md text-lg text-neutral-300 hover:text-white hover:border-neutral-500 transition-colors"
             title={drawerOpen ? 'Close' : 'Open Shop'}
           >
-            {drawerOpen ? '▲' : '☆'}
+            {drawerOpen ? '☆' : '☆'}
           </button>
           <div className="h-14 flex flex-col items-center justify-center bg-neutral-900 border-y border-l border-neutral-700 rounded-l-md text-amber-400 font-black">
             <div className="text-base leading-none">{gold}</div>
